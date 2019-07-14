@@ -3,10 +3,10 @@ using System.Diagnostics;
 
 namespace NSaga
 {
-    internal static class Guard
+    public static class Guard
     {
         [DebuggerHidden]
-        internal static void ArgumentIsNotNull(object value, string argument)
+        public static void ArgumentIsNotNull(object value, string argument)
         {
             if (value == null)
             {
@@ -16,7 +16,7 @@ namespace NSaga
 
 
         [DebuggerHidden]
-        internal static void CheckSagaMessage(ISagaMessage sagaMessage, string argumentName)
+        public static void CheckSagaMessage(ISagaMessage sagaMessage, string argumentName)
         {
             if (sagaMessage == null)
             {

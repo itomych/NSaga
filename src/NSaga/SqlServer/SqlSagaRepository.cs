@@ -1,8 +1,7 @@
-﻿using System;
-using System.Collections.Generic;
+﻿using NSaga.SqlServer;
+using NSaga.SqlServer.Model;
+using System;
 using System.Linq;
-using System.Xml.Serialization;
-using PetaPoco;
 
 namespace NSaga
 {
@@ -19,12 +18,9 @@ namespace NSaga
     /// </summary>
     public sealed class SqlSagaRepository : ISagaRepository
     {
-        internal const string SagaDataTableName = "NSaga.Sagas";
-        internal const string HeadersTableName = "NSaga.Headers";
-
         private readonly ISagaFactory sagaFactory;
         private readonly IMessageSerialiser messageSerialiser;
-        private readonly IConnectionFactory connectionFactory;
+        private readonly ISagaSqlDatabase database;
 
         /// <summary>
         /// Initiates an instance of <see cref="SqlSagaRepository"/> with a connection string name.
@@ -33,15 +29,15 @@ namespace NSaga
         /// <param name="connectionFactory">An insantance implementing <see cref="IConnectionFactory"/></param>
         /// <param name="sagaFactory">An instance implementing <see cref="ISagaFactory"/></param>
         /// <param name="messageSerialiser">An instance implementing <see cref="IMessageSerialiser"/></param>
-        public SqlSagaRepository(IConnectionFactory connectionFactory, ISagaFactory sagaFactory, IMessageSerialiser messageSerialiser)
+        public SqlSagaRepository(ISagaSqlDatabase database, ISagaFactory sagaFactory, IMessageSerialiser messageSerialiser)
         {
-            Guard.ArgumentIsNotNull(connectionFactory, nameof(connectionFactory));
+            Guard.ArgumentIsNotNull(database, nameof(database));
             Guard.ArgumentIsNotNull(sagaFactory, nameof(sagaFactory));
             Guard.ArgumentIsNotNull(messageSerialiser, nameof(messageSerialiser));
 
             this.messageSerialiser = messageSerialiser;
             this.sagaFactory = sagaFactory;
-            this.connectionFactory = connectionFactory;
+            this.database = database;
         }
 
 
@@ -58,31 +54,25 @@ namespace NSaga
         {
             Guard.ArgumentIsNotNull(correlationId, nameof(correlationId));
 
-            using(var connection = connectionFactory.CreateOpenConnection())
-            using (var database = new Database(connection))
+            var persistedData = database.GetById<SagaData>(correlationId).FirstOrDefault();
+
+            if (persistedData == null)
             {
-                var sql = Sql.Builder.Where("correlationId = @0", correlationId);
-                var persistedData = database.SingleOrDefault<SagaData>(sql);
-
-                if (persistedData == null)
-                {
-                    return null;
-                }
-
-                var sagaInstance = sagaFactory.ResolveSaga<TSaga>();
-                var sagaDataType = NSagaReflection.GetInterfaceGenericType<TSaga>(typeof(ISaga<>));
-                var sagaData = messageSerialiser.Deserialise(persistedData.BlobData, sagaDataType);
-
-                var headersSql = Sql.Builder.Where("correlationId = @0", correlationId);
-                var headersPersisted = database.Query<SagaHeaders>(headersSql);
-                var headers = headersPersisted.ToDictionary(k => k.Key, v => v.Value);
-
-                sagaInstance.CorrelationId = correlationId;
-                sagaInstance.Headers = headers;
-                NSagaReflection.Set(sagaInstance, "SagaData", sagaData);
-
-                return sagaInstance;
+                return null;
             }
+
+            var sagaInstance = sagaFactory.ResolveSaga<TSaga>();
+            var sagaDataType = NSagaReflection.GetInterfaceGenericType<TSaga>(typeof(ISaga<>));
+            var sagaData = messageSerialiser.Deserialise(persistedData.BlobData, sagaDataType);
+
+            var headersPersisted = database.GetById<SagaHeaders>(correlationId);
+            var headers = headersPersisted.ToDictionary(k => k.Key, v => v.Value);
+
+            sagaInstance.CorrelationId = correlationId;
+            sagaInstance.Headers = headers;
+            NSagaReflection.Set(sagaInstance, "SagaData", sagaData);
+
+            return sagaInstance;
         }
 
 
@@ -109,9 +99,7 @@ namespace NSaga
                 BlobData = serialisedData,
             };
 
-            using (var connection = connectionFactory.CreateOpenConnection())
-            using (var database = new Database(connection))
-            using (var transaction = database.GetTransaction())
+            using (var transaction = database.BeginTransaction())
             {
                 try
                 {
@@ -124,7 +112,7 @@ namespace NSaga
                     }
 
                     // delete all existing headers
-                    database.Delete<SagaHeaders>("WHERE CorrelationId=@0", correlationId);
+                    database.DeleteById<SagaHeaders>(correlationId);
 
                     // and insert updated ones
                     foreach (var header in sagaHeaders)
@@ -138,11 +126,11 @@ namespace NSaga
 
                         database.Insert(storedHeader);
                     }
-                    transaction.Complete();
+                    transaction.CommitTransaction();
                 }
-                catch (Exception)
+                catch (Exception ex)
                 {
-                    transaction.Dispose();
+                    transaction.RollbackTransaction();
                     throw;
                 }
             }
@@ -170,42 +158,20 @@ namespace NSaga
         {
             Guard.ArgumentIsNotNull(correlationId, nameof(correlationId));
 
-            using (var connection = connectionFactory.CreateOpenConnection())
-            using (var database = new Database(connection))
-            using (var transaction = database.GetTransaction())
+            using (var transaction = database.BeginTransaction())
             {
                 try
                 {
-                    database.Delete<SagaHeaders>("WHERE CorrelationId=@0", correlationId);
-                    database.Delete<SagaData>("WHERE CorrelationId=@0", correlationId);
-                    transaction.Complete();
+                    database.DeleteById<SagaHeaders>(correlationId);
+                    database.DeleteById<SagaData>(correlationId);
+                    transaction.CommitTransaction();
                 }
                 catch (Exception)
                 {
-                    transaction.Dispose();
+                    transaction.RollbackTransaction();
                     throw;
                 }
             }
         }
-    }
-
-
-
-    [TableName(SqlSagaRepository.SagaDataTableName)]
-    [PrimaryKey("CorrelationId", AutoIncrement = false)]
-    internal class SagaData
-    {
-        public Guid CorrelationId { get; set; }
-        public String BlobData { get; set; }
-    }
-
-
-    [TableName(SqlSagaRepository.HeadersTableName)]
-    [PrimaryKey("CorrelationId", AutoIncrement = false)]
-    internal class SagaHeaders
-    {
-        public Guid CorrelationId { get; set; }
-        public String Key { get; set; }
-        public String Value { get; set; }
     }
 }

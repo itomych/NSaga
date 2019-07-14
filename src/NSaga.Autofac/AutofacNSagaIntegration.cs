@@ -2,7 +2,7 @@
 using System.Linq;
 using System.Reflection;
 using Autofac;
-
+using NSaga.SqlServer;
 
 namespace NSaga.Autofac
 {
@@ -93,19 +93,6 @@ namespace NSaga.Autofac
             return builder;
         }
 
-
-        /// <summary>
-        /// This chain is aiding with registering <see cref="SqlSagaRepository"/> as the storage mechanism. 
-        /// </summary>
-        /// <param name="builder">Container Builder to do the registration</param>
-        /// <returns><see cref="SqlRepositoryBuilder"/> to aid with constructing connection string to the database</returns>
-        public static SqlRepositoryBuilder UseSqlServer(this ContainerBuilder builder)
-        {
-            Guard.ArgumentIsNotNull(builder, nameof(builder));
-
-            return new SqlRepositoryBuilder(builder);
-        }
-
         /// <summary>
         /// Adds another pipeline hook into the pipeline. <see cref="IPipelineHook"/> for description of possible interception points.
         /// </summary>
@@ -161,6 +148,18 @@ namespace NSaga.Autofac
 
             builder.Register(factory).As<IMessageSerialiser>();
             return builder;
+        }
+
+        /// <summary>
+        /// This chain is aiding with registering <see cref="SqlSagaRepository"/> as the storage mechanism. 
+        /// </summary>
+        /// <param name="builder">Container Builder to do the registration</param>
+        /// <returns><see cref="SqlRepositoryBuilder"/> to aid with constructing connection string to the database</returns>
+        public static SqlRepositoryBuilder UseSqlServer(this ContainerBuilder builder)
+        {
+            Guard.ArgumentIsNotNull(builder, nameof(builder));
+
+            return new SqlRepositoryBuilder(builder);
         }
     }
 }
